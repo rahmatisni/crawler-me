@@ -21,7 +21,7 @@ export function loadConfig(cli = parseCliArgs()) {
   const e = process.env;
   return {
     token: e.TWITTER_AUTH_TOKEN?.trim() || '',
-    lang: e.TWEET_LANG || 'id',
+    lang: e.TWEET_LANG ?? 'id', // kosongkan TWEET_LANG= untuk tanpa filter bahasa
     tab: (e.SEARCH_TAB || 'LATEST').toUpperCase(),
     since: e.SINCE || '',
     until: e.UNTIL || '',
@@ -35,6 +35,10 @@ export function loadConfig(cli = parseCliArgs()) {
     anonymize: bool(e.ANONYMIZE_USER, true),
     hashSalt: e.HASH_SALT || '',
     outputDir: e.OUTPUT_DIR || 'output',
+    engine: (e.HARVEST_ENGINE || 'playwright').toLowerCase(),
+    headless: bool(e.HEADLESS, true),
+    debugDump: bool(e.DEBUG_DUMP, false),
+    browserChannel: e.BROWSER_CHANNEL ?? 'chromium', // chromium | chrome | kosong (headless shell)
     harvestBin: e.TWEET_HARVEST_BIN || '', // opsional, untuk pengujian
     dryRun: cli.dryRun,
     only: cli.only,

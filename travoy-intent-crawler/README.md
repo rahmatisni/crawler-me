@@ -7,9 +7,23 @@ dan hasilnya disimpan sebagai JSON.
 
 Satu intent = satu servis (`src/services/<intent>.service.js`).
 
+**Panduan instalasi lengkap dari awal sampai akhir ada di [install.md](install.md).**
+
+Ringkas:
+
+```bash
+bash scripts/setup.sh                       # setup
+./scripts/crawl.sh find_ev_charger 20       # crawling satu intent
+./scripts/serve.sh                          # buka hasil di http://localhost:8080
+```
+
+Hasil disimpan sebagai JSON dan CSV per run, plus CSV gabungan per intent dan Excel
+(`output/export/korpus_intent.xlsx`, satu sheet per intent).
+
 ## Persiapan
 
-1. Node.js 18 atau lebih baru.
+1. Node.js 22 LTS (minimal 20.19 atau 22.12). tweet-harvest 2.7.1 tidak jalan di Node yang lebih lama;
+   kalau belum bisa upgrade Node, pakai `npm install tweet-harvest@2.6.1 --save-exact`.
 2. Install dependensi (otomatis mengunduh Chromium untuk Playwright):
    ```bash
    npm install
@@ -22,6 +36,18 @@ Satu intent = satu servis (`src/services/<intent>.service.js`).
 Login ke x.com di browser → DevTools (F12) → tab Application/Storage → Cookies → `https://x.com`
 → salin nilai cookie `auth_token`. Token ini setara password akun: simpan hanya di `.env`
 dan jangan dibagikan atau di-commit. Disarankan memakai akun khusus riset.
+
+## Mesin crawling
+
+`HARVEST_ENGINE` di `.env` menentukan cara crawling:
+
+- `playwright` (default): membuka `x.com/search?q=...` langsung dengan Playwright,
+  menangkap respons GraphQL pencarian X, dan memakai isi layar sebagai cadangan.
+- `tweet-harvest`: memakai CLI tweet-harvest (di-patch agar mencari lewat URL).
+
+Untuk melihat browser saat crawling: `HEADLESS=false npm run crawl:find_ev_charger -- --limit=20`.
+Bila sebuah keyword tidak menghasilkan tweet, screenshot halaman disimpan di
+`output/<intent>/_raw/<waktu>/debug/`, dan log mencetak operasi GraphQL yang terlihat.
 
 ## Menjalankan
 

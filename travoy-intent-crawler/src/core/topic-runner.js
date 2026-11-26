@@ -2,11 +2,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../config.js';
 import { buildQuery, flattenKeywords } from './query-builder.js';
-import { runHarvest } from './harvester.js';
-import { readCsv, normalizeTweet } from './normalizer.js';
-import { writeJsonAtomic, timestamp } from './storage.js';
+import { runHarvest, harvestVersion, assertNodeCompatible } from './harvester.js';
+import { normalizeTweet } from './normalizer.js';
+import { writeJsonAtomic, writeTextAtomic, timestamp } from './storage.js';
+import { toCsv, writeExports } from './exporter.js';
 
-const TOOL = 'tweet-harvest@2.7.1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 60);
 
@@ -37,17 +37,20 @@ export async function runTopicService(topic, config = loadConfig()) {
   if (!config.token) {
     throw new Error('TWITTER_AUTH_TOKEN belum diisi di file .env');
   }
+  if (config.engine === 'tweet-harvest' && !config.harvestBin) assertNodeCompatible();
 
   const tweets = new Map(); // id_str -> record
   const keywordLog = [];
 
-  const save = () =>
+  const csvFile = outFile.replace(/\.json$/, '.csv');
+  const save = () => {
+    writeTextAtomic(csvFile, toCsv([...tweets.values()]));
     writeJsonAtomic(outFile, {
       meta: {
         intent: topic.intent,
         description: topic.description,
         crawled_at: new Date().toISOString(),
-        tool: TOOL,
+        tool: config.engine === 'tweet-harvest' ? `tweet-harvest@${harvestVersion()}` : 'playwright',
         params: {
           lang: config.lang,
           tab: config.tab,
@@ -62,6 +65,7 @@ export async function runTopicService(topic, config = loadConfig()) {
       },
       data: [...tweets.values()],
     });
+  };
 
   for (let i = 0; i < keywords.length; i++) {
     const { keyword, type } = keywords[i];
@@ -86,8 +90,8 @@ export async function runTopicService(topic, config = loadConfig()) {
         throw new Error('auth_token X tidak valid atau kedaluwarsa. Perbarui TWITTER_AUTH_TOKEN.');
       }
 
-      if (result.csvPath) {
-        const rows = readCsv(result.csvPath);
+      if (result.rows) {
+        const rows = result.rows;
         entry.fetched = rows.length;
         for (const row of rows) {
           const existing = tweets.get(row.id_str);
@@ -99,6 +103,7 @@ export async function runTopicService(topic, config = loadConfig()) {
           tweets.set(row.id_str, {
             ...normalizeTweet(row, config),
             intent_candidate: topic.intent,
+            source: result.source ?? config.engine,
             matched_keywords: [keyword],
             keyword_types: [type],
             label: null, // diisi anotator; tweet ini masih kandidat, bukan label final
@@ -130,7 +135,13 @@ export async function runTopicService(topic, config = loadConfig()) {
   }
 
   save();
-  console.log(`\n■ Selesai ${topic.intent}: ${tweets.size} tweet unik → ${outFile}`);
+  console.log(`\n■ Selesai ${topic.intent}: ${tweets.size} tweet unik`);
+  console.log(`  JSON: ${outFile}`);
+  console.log(`  CSV : ${csvFile}`);
+  if (!config.skipExport) {
+    const { xlsx } = await writeExports(path.resolve(config.outputDir));
+    console.log(`  Gabungan diperbarui: ${xlsx}`);
+  }
   return outFile;
 }
 

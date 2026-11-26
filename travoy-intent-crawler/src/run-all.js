@@ -1,5 +1,7 @@
 import { loadConfig } from './config.js';
+import path from 'node:path';
 import { runTopicService } from './core/topic-runner.js';
+import { writeExports } from './core/exporter.js';
 import { topic as emergencyCall } from './services/emergency_call.service.js';
 import { topic as trafficInfo } from './services/get_traffic_info.service.js';
 import { topic as restArea } from './services/find_rest_area.service.js';
@@ -18,7 +20,7 @@ export const ALL_TOPICS = [
 ];
 
 /** Menjalankan semua servis satu per satu (berurutan, bukan paralel, agar tidak kena rate limit). */
-const config = loadConfig();
+const config = { ...loadConfig(), skipExport: true };
 for (const topic of ALL_TOPICS) {
   try {
     await runTopicService(topic, config);
@@ -26,4 +28,9 @@ for (const topic of ALL_TOPICS) {
     console.error(`\n✗ ${topic.intent}: ${err.message}`);
     if (err.message.includes('auth_token') || err.message.includes('TWITTER_AUTH_TOKEN')) process.exit(1);
   }
+}
+
+if (!config.dryRun) {
+  const { xlsx } = await writeExports(path.resolve(config.outputDir));
+  console.log(`\nFile gabungan: ${xlsx}`);
 }

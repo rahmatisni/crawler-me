@@ -9,4 +9,11 @@ export function writeJsonAtomic(filePath, data) {
   fs.renameSync(tmp, filePath);
 }
 
+export function writeTextAtomic(filePath, text) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, text, 'utf8');
+  fs.renameSync(tmp, filePath);
+}
+
 export const timestamp = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
