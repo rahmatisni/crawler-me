@@ -110,6 +110,8 @@ Jika logout dari x.com, token lama tidak berlaku dan harus diambil ulang.
 | `SERVER_PORT` | `8080` | Port server hasil |
 | `SERVER_HOST` | `127.0.0.1` | `0.0.0.0` agar bisa diakses dari perangkat lain |
 | `SERVER_ACCESS_KEY` | kosong | Kunci akses server; wajib diisi bila `SERVER_HOST=0.0.0.0` |
+| `SERVER_BASE_PATH` | kosong | Prefix URL di belakang reverse proxy, mis. `/crawler` |
+| `SERVER_SHOW_RAW` | `false` | `true` = folder `_raw` ikut tampil di file manager |
 
 ---
 
@@ -221,15 +223,31 @@ output/
 ./scripts/serve.sh --stop     # hentikan server latar belakang
 ```
 
-Buka **http://localhost:8080/** (ganti `8080` sesuai `SERVER_PORT`). Halaman ini menampilkan
-daftar intent, jumlah tweet unik, tautan unduh gabungan, dan file per run. Data selalu dibaca
-ulang dari folder `output/`, jadi server boleh tetap jalan selama crawling.
+Buka **http://localhost:8080/** (ganti `8080` sesuai `SERVER_PORT`). Halaman pertama adalah
+**file manager** untuk folder `output/`:
+
+- klik folder untuk masuk, gunakan breadcrumb di atas tabel untuk kembali;
+- klik nama file (JSON, CSV, PNG, log) untuk melihat isinya di tab baru, atau **Unduh** untuk menyimpan;
+- **Unduh .zip** di baris folder mengunduh seluruh isi folder;
+- centang beberapa file lalu **Unduh terpilih (.zip)**;
+- kolom pencarian menyaring isi folder yang sedang dibuka; judul kolom bisa diklik untuk mengurutkan;
+- tombol **Excel semua intent** dan **Unduh semua (.zip)** ada di kanan atas, kartu jumlah tweet per intent di bawahnya.
+
+File manager hanya-baca: tidak ada fitur hapus, ubah nama, atau unggah. Folder `_raw` (CSV mentah,
+screenshot, dan respons debug) disembunyikan; tampilkan dengan `SERVER_SHOW_RAW=true` di `.env`
+bila diperlukan. Data selalu dibaca ulang dari disk, jadi server boleh tetap jalan selama crawling.
 
 ### Endpoint
 
 | URL | Isi |
 |---|---|
-| `/` | Halaman daftar intent dan file |
+| `/` | File manager folder `output/` |
+| `/browse?path=<folder>` | File manager untuk subfolder, mis. `?path=find_ev_charger` |
+| `/raw?path=<file>` | Buka file (tambah `&download=1` untuk mengunduh) |
+| `/zip?path=<folder>` | Unduh folder sebagai .zip (`path` kosong = seluruh output) |
+| `/zip?files=<a>&files=<b>` | Unduh beberapa file terpilih sebagai .zip |
+| `/api/fs?path=<folder>` | Isi folder dalam JSON |
+| `/ringkasan` | Halaman ringkasan per intent |
 | `/api/intents` | Ringkasan semua intent (JSON) |
 | `/api/intents/<intent>` | Semua tweet satu intent, digabung (JSON) |
 | `/api/intents/<intent>?format=csv` | Sama, dalam CSV |
@@ -265,8 +283,8 @@ atau ubah `SERVER_PORT=9000` di `.env`.
 4. Dari perangkat lain buka `http://<ip-laptop>:8080/?key=isi-dengan-kunci-acak`.
    Untuk `curl`, kirim kunci lewat header: `-H "x-access-key: isi-dengan-kunci-acak"`.
 
-Server hanya membuka file hasil (`.json`, `.csv`, Excel). Folder `_raw` (log mentah, screenshot,
-contoh respons) dan file `.env` tidak bisa diakses lewat server.
+Server hanya bisa membaca isi folder `output/`. Path yang mencoba keluar dari folder itu, file
+tersembunyi (termasuk `.env`), dan folder `_raw` (kecuali `SERVER_SHOW_RAW=true`) ditolak.
 
 ---
 

@@ -2,23 +2,84 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
+import archiver from 'archiver';
 import { listIntents, listRuns, loadIntentRecords, summarize, toCsv, buildWorkbook } from './core/exporter.js';
+import { createFileManager, MIME, inlineType, contentDisposition } from './core/file-manager.js';
+import { fileManagerPage } from './web/file-manager-page.js';
 
 /**
  * Server file hasil crawling.
- *   GET /                              halaman daftar intent dan file
+ *   GET /                              file manager (folder output)
+ *   GET /browse?path=<folder>          file manager untuk subfolder
+ *   GET /raw?path=<file>[&download=1]  buka / unduh satu file
+ *   GET /zip?path=<folder>             unduh folder sebagai .zip (path kosong = semua)
+ *   GET /zip?files=<a>&files=<b>       unduh beberapa file terpilih sebagai .zip
+ *   GET /api/fs?path=<folder>          isi folder (JSON)
+ *   GET /ringkasan                     halaman ringkasan per intent
  *   GET /api/intents                   ringkasan semua intent (JSON)
  *   GET /api/intents/:intent           semua tweet intent, digabung (?format=csv untuk CSV)
  *   GET /download/korpus_intent.xlsx   Excel, satu sheet per intent (dibuat saat diminta)
  *   GET /files/:intent/:file           file hasil per run (.json / .csv)
  *   GET /health                        cek server hidup
- * Folder _raw (log mentah, debug, screenshot) sengaja tidak dibuka.
+ * Folder _raw (log mentah, debug, screenshot) disembunyikan kecuali SERVER_SHOW_RAW=true.
  */
 const config = loadConfig({});
 const OUTPUT_DIR = path.resolve(config.outputDir);
 const PORT = Number(process.env.SERVER_PORT || 8080);
 const HOST = process.env.SERVER_HOST || '127.0.0.1';
 const ACCESS_KEY = process.env.SERVER_ACCESS_KEY || '';
+// Prefix URL bila server dipasang di belakang reverse proxy, mis. nginx /crawler/ -> :9000
+const BASE_ENV = (process.env.SERVER_BASE_PATH || '').replace(/\/+$/, '');
+
+function basePath(req) {
+  const h = req.headers['x-forwarded-prefix'];
+  const b = typeof h === 'string' && /^\/[\w\-/]*$/.test(h) ? h : BASE_ENV;
+  return b.replace(/\/+$/, '');
+}
+
+const SHOW_RAW = ['1', 'true', 'yes'].includes(String(process.env.SERVER_SHOW_RAW || '').toLowerCase());
+const fm = createFileManager(OUTPUT_DIR, { showRaw: SHOW_RAW });
+
+/** Pembuat URL: prefix proxy + route + parameter + key akses. */
+function hrefBuilder(base) {
+  return (route, params = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) qs.set(k, String(v));
+    if (ACCESS_KEY) qs.set('key', ACCESS_KEY);
+    const q = qs.toString();
+    return `${base}${route}${q ? `?${q}` : ''}`;
+  };
+}
+
+function sendFile(res, entry, download) {
+  const name = path.basename(entry.abs);
+  const ext = path.extname(name).slice(1).toLowerCase();
+  const preview = !download && inlineType(ext);
+  res.writeHead(200, {
+    'Content-Type': preview || MIME[ext] || 'application/octet-stream',
+    'Content-Length': entry.stat.size,
+    'Content-Disposition': contentDisposition(name, Boolean(preview)),
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store',
+  });
+  fs.createReadStream(entry.abs).pipe(res);
+}
+
+function sendZip(res, zipName, addEntries) {
+  res.writeHead(200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': contentDisposition(zipName),
+    'Cache-Control': 'no-store',
+  });
+  const zip = archiver('zip', { zlib: { level: 6 } });
+  zip.on('error', (err) => {
+    console.error(err);
+    res.destroy(err);
+  });
+  zip.pipe(res);
+  addEntries(zip);
+  zip.finalize();
+}
 
 const SAFE_NAME = /^[a-z0-9_]+$/;
 const SAFE_FILE = /^[a-z0-9_]+_\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.(json|csv)$/;
@@ -37,21 +98,21 @@ function authorized(req, url) {
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-function indexPage(keyQuery) {
+function indexPage(keyQuery, base = '') {
   const rows = summarize(OUTPUT_DIR)
     .map(({ intent, total_unique, runs, last_run }) => {
       const runLinks = listRuns(OUTPUT_DIR, intent)
         .map((r) => {
-          const json = `<a href="/files/${intent}/${r.json}${keyQuery}">JSON</a>`;
-          const csv = r.csv ? ` · <a href="/files/${intent}/${r.csv}${keyQuery}">CSV</a>` : '';
+          const json = `<a href="${base}/files/${intent}/${r.json}${keyQuery}">JSON</a>`;
+          const csv = r.csv ? ` · <a href="${base}/files/${intent}/${r.csv}${keyQuery}">CSV</a>` : '';
           return `<li>${esc(r.runId)} — ${json}${csv} <span class="muted">(${r.sizeKb} KB)</span></li>`;
         })
         .join('');
       return `<tr>
         <td><strong>${esc(intent)}</strong></td>
         <td class="num">${total_unique}</td>
-        <td><a href="/api/intents/${intent}?format=csv${keyQuery.replace('?', '&')}">CSV gabungan</a> ·
-            <a href="/api/intents/${intent}${keyQuery}">JSON gabungan</a></td>
+        <td><a href="${base}/api/intents/${intent}?format=csv${keyQuery.replace('?', '&')}">CSV gabungan</a> ·
+            <a href="${base}/api/intents/${intent}${keyQuery}">JSON gabungan</a></td>
         <td><details><summary>${runs} run, terakhir ${esc(last_run ?? '-')}</summary><ul>${runLinks}</ul></details></td>
       </tr>`;
     })
@@ -73,7 +134,7 @@ ul{margin:6px 0 0;padding-left:18px}.btn{display:inline-block;margin:0 0 16px;pa
 </style></head><body><main>
 <h1>Travoy Intent Crawler</h1>
 <p>Hasil crawling per intent. Data diperbarui setiap halaman dimuat.</p>
-<a class="btn" href="/download/korpus_intent.xlsx${keyQuery}">Unduh Excel (satu sheet per intent)</a>
+<a class="btn" href="${base}/download/korpus_intent.xlsx${keyQuery}">Unduh Excel (satu sheet per intent)</a>
 <div class="wrap"><table><thead><tr><th>Intent</th><th class="num">Tweet unik</th><th>Gabungan</th><th>File per run</th></tr></thead>
 <tbody>${rows || '<tr><td colspan="4">Belum ada hasil crawling.</td></tr>'}</tbody></table></div>
 </main></body></html>`;
@@ -89,7 +150,48 @@ const server = http.createServer(async (req, res) => {
     const keyQuery = ACCESS_KEY ? `?key=${encodeURIComponent(ACCESS_KEY)}` : '';
     const parts = url.pathname.split('/').filter(Boolean);
 
-    if (parts.length === 0) return send(res, 200, indexPage(keyQuery), 'text/html; charset=utf-8');
+    const href = hrefBuilder(basePath(req));
+
+    // ---- File manager ----
+    if (parts.length === 0 || parts[0] === 'browse') {
+      const listing = fm.list(url.searchParams.get('path') || '');
+      if (!listing) return send(res, 404, 'Folder tidak ditemukan');
+      const sort = ['name', 'size', 'mtime'].includes(url.searchParams.get('sort')) ? url.searchParams.get('sort') : 'mtime';
+      const dir = url.searchParams.get('dir') === 'asc' ? 'asc' : 'desc';
+      const html = fileManagerPage({ listing, href, sort, dir, summary: listing.path ? [] : summarize(OUTPUT_DIR) });
+      return send(res, 200, html, 'text/html; charset=utf-8');
+    }
+    if (parts[0] === 'ringkasan') return send(res, 200, indexPage(keyQuery, basePath(req)), 'text/html; charset=utf-8');
+
+    if (parts[0] === 'api' && parts[1] === 'fs') {
+      const listing = fm.list(url.searchParams.get('path') || '');
+      return listing ? sendJson(res, listing) : send(res, 404, 'Folder tidak ditemukan');
+    }
+
+    if (parts[0] === 'raw') {
+      const entry = fm.resolve(url.searchParams.get('path') || '');
+      if (!entry || !entry.stat.isFile()) return send(res, 404, 'File tidak ditemukan');
+      return sendFile(res, entry, url.searchParams.has('download'));
+    }
+
+    if (parts[0] === 'zip') {
+      const files = url.searchParams.getAll('files');
+      if (files.length) {
+        const entries = files.map((f) => fm.resolve(f)).filter((e) => e && e.stat.isFile());
+        if (!entries.length) return send(res, 404, 'Tidak ada file yang valid');
+        return sendZip(res, 'file_terpilih.zip', (zip) => entries.forEach((e) => zip.file(e.abs, { name: e.rel })));
+      }
+      const target = fm.resolve(url.searchParams.get('path') || '');
+      if (!target || !target.stat.isDirectory()) return send(res, 404, 'Folder tidak ditemukan');
+      const zipName = `${target.rel ? target.rel.replace(/\//g, '_') : 'output'}.zip`;
+      return sendZip(res, zipName, (zip) =>
+        zip.glob('**/*', {
+          cwd: target.abs,
+          dot: false,
+          ignore: SHOW_RAW ? ['**/*.tmp'] : ['_raw/**', '**/_raw/**', '**/*.tmp'],
+        }, { prefix: target.rel ? path.basename(target.abs) : 'output' })
+      );
+    }
 
     if (parts[0] === 'api' && parts[1] === 'intents') {
       if (parts.length === 2) return sendJson(res, summarize(OUTPUT_DIR));
