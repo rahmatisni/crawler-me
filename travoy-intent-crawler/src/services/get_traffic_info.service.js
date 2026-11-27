@@ -14,21 +14,21 @@ export const topic = {
   keywords: {
     // Pengguna menyebut kebutuhan/fitur secara langsung
     eksplisit: [
-      '"info lalin" tol',
       '"kondisi lalu lintas" tol',
-      '"rekayasa lalin" tol',
-      'contraflow tol',
+      '"lalu lintas" tol',
+      '"lalin" tol',
+      '"gangguan" tol',
+      '"kepadatan" tol',
+      '"rekayasa" tol',
+      '"contraflow" tol',
       '"one way" tol',
-      '"info tol" macet',
+      '"pemeliharaan" tol',
+      '"pekerjaan" tol',
+      '"proyek" tol',
     ],
     // Pengguna menggambarkan situasi tanpa menyebut fiturnya
     implisit: [
-      '"tol macet"',
-      '"tol padat"',
-      '"tol merayap"',
-      'antrean "gerbang tol"',
-      '"lewat tol" lancar',
-      '"tol cikampek" macet',
+    
     ],
   },
 };
